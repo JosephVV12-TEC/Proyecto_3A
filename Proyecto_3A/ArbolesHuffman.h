@@ -345,4 +345,4 @@ bool comprimir(const char* rutaEntrada) //Aca la funcion ya comprime todo y le p
     cout << "Tamano original : " << total << " bytes\n";
     cout << "Tamano comprimido: " << tamanoCmp << " bytes\n";
     return true;
-}//
+}

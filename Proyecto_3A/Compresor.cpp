@@ -1,11 +1,20 @@
 #include "ArbolesHuffman.h"
 
-int main() 
+int main()
 {
+    int opcion;
+    cout << "1. Comprimir\n2. Descomprimir\nOpcion: ";
+    cin >> opcion;
+    cin.ignore(); // quita el Enter que queda pendiente antes del getline
+
     char ruta[600];
-    cout << "Ruta del archivo a comprimir: ";
+    if (opcion == 1) cout << "Ruta del archivo a comprimir: ";
+    else             cout << "Ruta del archivo .cmp a descomprimir: ";
     cin.getline(ruta, 600);
     quitarComillas(ruta);
-    comprimir(ruta);
+
+    if (opcion == 1) comprimir(ruta);
+    else if (opcion == 2) descomprimir(ruta);
+    else cout << "Opcion invalida.\n";
     return 0;
 }

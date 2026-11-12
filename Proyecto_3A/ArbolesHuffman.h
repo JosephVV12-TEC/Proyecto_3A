@@ -301,10 +301,8 @@ bool comprimir(const char* rutaEntrada) //Aca la funcion ya comprime todo y le p
     char camino[256];
     generarCodigos(raiz, camino, 0);
 
-    // 4. Checksum: el XOR de todos los bytes del archivo.
-    //    Como x ^ x = 0, los bytes que aparecen un numero PAR de veces se cancelan,
-    //    asi que basta hacer XOR con los bytes cuya frecuencia es impar.
-    //aca es el paso 4
+	//Luego aca se hace el 4 paso que es hacer un checksum (el cual esun numero de 1 solo byte que sirve para que despues, cuando se va a descomprimir, se pueda verificar que el archivo comprimido no se haya dañado)
+    //El checksum se calcula haciendo un XOR de todos los bytes que tienen una frecuencia impar porque si un byte aparece un numero impar de veces, al descomprimirlo va a aparecer un numero impar de veces tambien, y eso es lo que se quiere verificar
     unsigned char checksum = 0;
     for (int i = 0; i < 256; i++)
         if ((frecuencia[i] & 1) == 1)
@@ -344,5 +342,135 @@ bool comprimir(const char* rutaEntrada) //Aca la funcion ya comprime todo y le p
     cout << "Archivo comprimido: " << rutaSalida << endl;
     cout << "Tamano original : " << total << " bytes\n";
     cout << "Tamano comprimido: " << tamanoCmp << " bytes\n";
+    return true;
+}
+
+
+//DE ACA EN ADELANTE ES CODIGO DEL DESCOMPRESOR SOLAMENTE
+
+struct LectorBits//Es como la hermana de EscritorBits: en vez de armar un byte bit por bit, lo va desarmando
+{
+    FILE* entrada;// archivo del que se lee
+    unsigned char buffer;// byte que se esta leyendo
+    int bitsLeidos;// cuantos bits del buffer ya se usaron (8 = hay que leer otro byte)
+    bool error;// true si el archivo se acabo antes de tiempo
+};
+
+int leerBitArchivo(LectorBits* l) //Devuelve el siguiente bit (de izquierda a derecha, igual que escribirBit)
+{
+    if (l->bitsLeidos == 8)
+    {
+        int c = fgetc(l->entrada);
+        if (c == EOF) { l->error = true; return 0; }
+        l->buffer = (unsigned char)c;
+        l->bitsLeidos = 0;
+    }
+    int bit = leerBit(l->buffer, 7 - l->bitsLeidos); //Esto basicamente dice que 
+    l->bitsLeidos++;
+    return bit;
+}
+
+int leerByteDeBits(LectorBits* l)//Es lo contrario de escribirByteComoBits, junta 8 bits y arma un byte
+{
+    int valor = 0;
+    for (int i = 0; i < 8; i++)
+        valor = (valor << 1) | leerBitArchivo(l);
+    return valor;
+}
+
+NodoA* leerArbol(LectorBits* l)//Este es el contrario a guardarArbol, lee el arbol de huffman del archivo comprimido y lo reconstruye
+{
+    if (l->error || cantidadNodos >= 512) 
+    { 
+        l->error = true; return NULL; 
+    }
+
+    if (leerBitArchivo(l) == 1) //bit 1 = hoja (a hoja se refiere al nodo que no tiene hijos por si acaso), los siguientes 8 bits son el byte
+    {
+        int b = leerByteDeBits(l);
+        return nuevoNodo(0, b, NULL, NULL);
+    }
+    NodoA* izq = leerArbol(l);
+    NodoA* der = leerArbol(l);
+    if (l->error || cantidadNodos >= 512) { l->error = true; return NULL; }
+    return nuevoNodo(0, -1, izq, der);
+}
+
+bool descomprimir(const char* rutaEntrada) //Para descompresor es muy parecido a como se hace graficamente o a mano, se lee el header, se arma el arbol y se leen los bits
+{
+    FILE* entrada;
+    if (fopen_s(&entrada, rutaEntrada, "rb") != 0) { cout << "No se pudo abrir el archivo.\n"; return false; }
+
+    //Paso 1 es leer el header del archivo comprimido
+    int largoNombre = fgetc(entrada);
+    if (largoNombre == EOF || largoNombre == 0) { cout << "Archivo .cmp invalido.\n"; fclose(entrada); return false; }
+
+    char nombre[256];
+    for (int i = 0; i < largoNombre; i++)
+    {
+        int c = fgetc(entrada);
+        if (c == EOF) { cout << "Archivo .cmp incompleto.\n"; fclose(entrada); return false; }
+        nombre[i] = (char)c;
+    }
+    nombre[largoNombre] = '\0';
+
+    int total = leerNumero(entrada, 4);
+    int checksumGuardado = fgetc(entrada);
+    if (checksumGuardado == EOF) { cout << "Archivo .cmp incompleto.\n"; fclose(entrada); return false; }
+
+    //Paso 2 es armar el bombre del archivo con concatenar (esto es lo unico que no se parece a lo grafico)
+    int punto = ultimaPosicion(nombre, '.');
+    int largoBase = (punto > 0) ? punto : largoNombre;
+
+    char rutaSalida[600];
+    rutaSalida[0] = '\0';
+    concatenar(rutaSalida, rutaEntrada, inicioNombre(rutaEntrada)); // la carpeta
+    concatenar(rutaSalida, nombre, largoBase);
+    concatenar(rutaSalida, "-descomprimido", 14);
+    if (punto > 0)
+        concatenar(rutaSalida, nombre + punto, largoNombre - punto);// la extension original (con el punto)
+
+	//El paso 3 es leer el arbol de huffman del archivo comprimido y reconstruirlo
+    LectorBits lector;
+    lector.entrada = entrada;
+    lector.buffer = 0;
+    lector.bitsLeidos = 8;// 8 para que el primer leerBitArchivo lea un byte nuevo
+    lector.error = false;
+
+    cantidadNodos = 0;
+    NodoA* raiz = NULL;
+    if (total > 0) raiz = leerArbol(&lector);//si el archivo estaba vacio no se guardo ningun arbol
+
+	//El paso 4 es leer los bits del archivo comprimido y reconstruir el archivo original usando el arbol de huffman
+    FILE* salida;
+    if (fopen_s(&salida, rutaSalida, "wb") != 0) { cout << "No se pudo crear el archivo de salida.\n"; fclose(entrada); return false; }
+
+    unsigned char checksum = 0;
+    for (int k = 0; k < total && !lector.error; k++)
+    {
+        NodoA* nodo = raiz;
+        while (nodo->HijoIzquierdo != NULL || nodo->HijoDerecho != NULL)
+        {
+            if (leerBitArchivo(&lector) == 0) nodo = nodo->HijoIzquierdo;
+            else nodo = nodo->HijoDerecho;
+        }
+        if (lector.error) break;
+        fputc(nodo->byte, salida);
+        checksum = checksum ^ (unsigned char)nodo->byte;
+    }
+    fclose(salida);
+    fclose(entrada);
+
+    //El paso 5 seroa verificar con el checksum del header (el que hicimos en lo de comprimir)
+    if (lector.error)
+    {
+        cout << "El archivo .cmp esta incompleto o corrupto.\n";
+        return false;
+    }
+    cout << "Archivo descomprimido: " << rutaSalida << endl;
+    if (checksum == (unsigned char)checksumGuardado)
+        cout << "Checksum correcto: el archivo quedo igual al original.\n";
+    else
+        cout << "ADVERTENCIA: el checksum no coincide, el archivo puede estar danado.\n";
     return true;
 }

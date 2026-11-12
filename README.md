@@ -5,4 +5,4 @@ http://www.zator.com/Cpp/E4_9_3.htm
 
 ## Imagen del Día
 
-![SOS Dan](oa.jpg")
+![SOS Dan](oa.jpg)
